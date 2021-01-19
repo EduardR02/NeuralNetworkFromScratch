@@ -48,6 +48,7 @@ def backprop_softmax_derivative(weight_mat, lr, error, prev_layer_activation):
     weight_mat += lr * np.dot(error, np.transpose(prev_layer_activation))
 
 
+@jit('void(float64[:,:], float64, float64[:,:])', nopython=True)
 def backprop_bias(bias_mat, lr,  error):
     bias_mat += lr * error
 
