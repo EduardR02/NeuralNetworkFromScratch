@@ -48,9 +48,20 @@ def backprop_softmax_derivative(weight_mat, lr, error, prev_layer_activation):
     weight_mat += lr * np.dot(error, np.transpose(prev_layer_activation))
 
 
-def relu_backprop(k):
+def backprop_bias(bias_mat, lr,  error):
+    bias_mat += lr * error
+
+
+def relu_derivative(k):
     x = k.copy()
     x[x < 0] = 0
+    x[x > 0] = 1
+    return x
+
+
+def leaky_relu_derivative(k):
+    x = k.copy()
+    x[x <= 0] = 1e-6
     x[x > 0] = 1
     return x
 
@@ -63,7 +74,7 @@ def back_prop(weight_mat, lr, error, this_layer_activation, prev_layer_activatio
     if activation == "sigmoid":
         backprop_sigmoid_derivative(weight_mat, lr, error, this_layer_activation, prev_layer_activation)
     elif activation == "relu":
-        backprop_relu(weight_mat, lr, error, relu_backprop(this_layer_activation), prev_layer_activation)
+        backprop_relu(weight_mat, lr, error, relu_derivative(this_layer_activation), prev_layer_activation)
     elif activation == "softmax":
         backprop_softmax_derivative(weight_mat, lr, error, prev_layer_activation)
     else:
@@ -83,18 +94,24 @@ class NeuralNetwork:
         self.input_nodes = input_nodes
         self.output_nodes = output_nodes
         self.lr = learning_rate
-        self.bias = bias
         self.counter = 0
-        self.all_nodes = []
-        self.all_nodes.append(input_nodes)
-        for layer in hidden:
-            self.all_nodes.append(layer)
+        self.all_nodes = [layer for layer in hidden]
+        self.all_nodes.insert(0, input_nodes)
         self.all_nodes.append(output_nodes)
         # create weight matrices
         self.weight_matrices = []
         for i in range(len(self.all_nodes) - 1):
             self.weight_matrices.append(np.random.normal(0.0, pow(self.all_nodes[i], -0.5),
                                                          (self.all_nodes[i + 1], self.all_nodes[i])))
+        if len(self.weight_matrices) == 1 or not bias:
+            self.bias = False
+        else:
+            self.bias = True
+            self.bias_matrices = []
+            for i in range(len(self.weight_matrices) - 1):
+                x, y = self.weight_matrices[i + 1].shape
+                self.bias_matrices.append(np.atleast_2d(np.zeros(y)).transpose())
+
         # activation functions
         self.sigmoid_activation = lambda x: sci.expit(x)
         self.relu_forward = lambda x: np.maximum(0.0, x)
@@ -135,6 +152,8 @@ class NeuralNetwork:
                 back_prop(self.weight_matrices[-i], self.lr, errors[-i], outputs[-i], outputs[-(i + 1)], "softmax")
             else:
                 back_prop(self.weight_matrices[-i], self.lr, errors[-i], outputs[-i], outputs[-(i + 1)], self.activation)
+            if self.bias and i < len(self.bias_matrices) + 1:
+                backprop_bias(self.bias_matrices[-i], self.lr, errors[-(i + 1)])
         # metrics
         self.get_accuracy(target, outputs[-1])
         self.cross_entropy_loss(outputs[-1], target)
@@ -147,7 +166,11 @@ class NeuralNetwork:
     def feed_forward(self, inputs_list):
         outputs = [np.atleast_2d(inputs_list).transpose()]
         for i in range(len(self.weight_matrices)):
-            output = np.matmul(self.weight_matrices[i], outputs[i])
+            # last layer is softmax and has no bias
+            if self.bias and i < len(self.weight_matrices) - 1:
+                output = np.matmul(self.weight_matrices[i], outputs[i]) + self.bias_matrices[i]
+            else:
+                output = np.matmul(self.weight_matrices[i], outputs[i])
             if i == len(self.weight_matrices) - 1:
                 output = self.apply_activation_function(output, "softmax")
             else:
@@ -156,14 +179,7 @@ class NeuralNetwork:
         return outputs
 
     def predict(self, input_list):
-        output = np.atleast_2d(input_list).transpose()
-        for i in range(len(self.weight_matrices)):
-            output = np.matmul(self.weight_matrices[i], output)
-            if i == len(self.weight_matrices) - 1:
-                output = self.apply_activation_function(output, "softmax")
-            else:
-                output = self.apply_activation_function(output, self.activation)
-        return output
+        return self.feed_forward(input_list)[-1]
 
     def train_mnist(self, epochs, load=True):
         train_images = mnist.train_images()
@@ -174,6 +190,7 @@ class NeuralNetwork:
 
         if load:
             self.load_weights()
+            if self.bias: self.load_bias()
         for j in range(epochs):
             for i in range(len(train_images)):
                 self.train(train_images[i], train_labels[i])
@@ -183,6 +200,7 @@ class NeuralNetwork:
             self.accuracy = np.ones(2)
             self.loss = np.ones(2)
         self.save_weights()
+        if self.bias: self.save_bias()
 
     def test_net(self):
         test_images = mnist.test_images()
@@ -193,8 +211,9 @@ class NeuralNetwork:
         self.loss = np.ones(2)
 
         self.load_weights()
+        if self.bias: self.load_bias()
         for i in range(len(test_labels)):
-            x = self.feed_forward(test_images[i])[-1]
+            x = self.predict(test_images[i])
             self.cross_entropy_loss(x, test_labels[i])
             self.get_accuracy(x, test_labels[i])
             if i % 200 == 0 or i == len(test_labels) - 1:
@@ -207,3 +226,11 @@ class NeuralNetwork:
     def save_weights(self):
         for i in range(len(self.weight_matrices)):
             np.save(f"weights_matrix_{i}.npy", self.weight_matrices[i])
+
+    def save_bias(self):
+        for i in range(len(self.bias_matrices)):
+            np.save(f"bias_matrix_{i}.npy", self.bias_matrices[i])
+
+    def load_bias(self):
+        for i in range(len(self.bias_matrices)):
+            self.bias_matrices[i] = np.load(f"bias_matrix_{i}.npy")
