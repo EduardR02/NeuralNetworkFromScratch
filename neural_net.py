@@ -4,7 +4,6 @@ import numpy as np
 import scipy.special as sci
 import mnist
 from numba import jit
-from matplotlib import pyplot as plt
 
 
 def progressBar(current, total, epoch, acc, loss, bar_length=20):
@@ -87,6 +86,14 @@ def cross_entropy_cost_func(predicted, target):
     # is not necessary
     # very low epsilon so the inside of log is never 0
     return -log(predicted[np.argmax(target)] + 1e-8)
+
+
+def shuffle_data(samples, labels):
+    indices = np.arange(labels.shape[0])
+    np.random.shuffle(indices)
+    labels = labels[indices]
+    samples = samples[indices]
+    return samples, labels
 
 
 class NeuralNetwork:
@@ -193,6 +200,7 @@ class NeuralNetwork:
             self.load_weights()
             if self.bias: self.load_bias()
         for j in range(epochs):
+            train_images, train_labels = shuffle_data(train_images, train_labels)
             for i in range(len(train_images)):
                 self.train(train_images[i], train_labels[i])
                 if i % 200 == 0 or i == len(train_images) - 1:
