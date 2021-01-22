@@ -1,3 +1,4 @@
+import math
 from math import log
 
 import numpy as np
@@ -30,26 +31,25 @@ def to_categorical(arr):
 @jit('void(float64[:,:], float64, float64[:,:], float64[:,:], float64[:,:])', nopython=True)
 def backprop_sigmoid_derivative(weight_mat, lr, error, this_layer_activation, prev_layer_activation):
     # the sigmoid function has at this point already been applied to this_layer
-    weight_mat += lr * np.dot((error * this_layer_activation * (1.0 - this_layer_activation)),
+    weight_mat -= lr * np.dot((error * this_layer_activation * (1.0 - this_layer_activation)),
                               np.transpose(prev_layer_activation))
 
 
 @jit('void(float64[:,:], float64, float64[:,:], float64[:,:], float64[:,:])', nopython=True)
 def backprop_relu(weight_mat, lr, error, this_layer_activation, prev_layer_activation):
     # relu derivative has been applied to this_layer by this point
-    weight_mat += lr * np.dot((error * this_layer_activation), np.transpose(prev_layer_activation))
+    weight_mat -= lr * np.dot((error * this_layer_activation), np.transpose(prev_layer_activation))
 
 
 @jit('void(float64[:,:], float64, float64[:,:], float64[:,:])', nopython=True)
 def backprop_softmax_derivative(weight_mat, lr, error, prev_layer_activation):
-    # target values - softmax activation; I don't know why this works and the other way around
-    # (softmax activation - target values) for some reason does not
-    weight_mat += lr * np.dot(error, np.transpose(prev_layer_activation))
+    # (softmax activation - target values)
+    weight_mat -= lr * np.dot(error, np.transpose(prev_layer_activation))
 
 
 @jit('void(float64[:,:], float64, float64[:,:])', nopython=True)
-def backprop_bias(bias_mat, lr,  error):
-    bias_mat += lr * error
+def backprop_bias_single_layer(bias_mat, lr,  error):
+    bias_mat -= lr * error
 
 
 def relu_derivative(k):
@@ -70,7 +70,7 @@ def mean_squared_error_cost(target, prediction):
     return np.mean(np.square(target - prediction) * 0.5)
 
 
-def back_prop(weight_mat, lr, error, this_layer_activation, prev_layer_activation, activation ="relu"):
+def back_prop_single_layer(weight_mat, lr, error, this_layer_activation, prev_layer_activation, activation ="relu"):
     if activation == "sigmoid":
         backprop_sigmoid_derivative(weight_mat, lr, error, this_layer_activation, prev_layer_activation)
     elif activation == "relu":
@@ -96,13 +96,20 @@ def shuffle_data(samples, labels):
     return samples, labels
 
 
+def iterate_minibatches(samples, labels, batchsize):
+    # https://stackoverflow.com/questions/38157972/how-to-implement-mini-batch-gradient-descent-in-python
+    for i in range(0, samples.shape[0] - batchsize + 1, batchsize):
+        excerpt = slice(i, i + batchsize)
+        yield samples[excerpt], labels[excerpt]
+
+
 class NeuralNetwork:
     # implement many hidden layers with args
-    def __init__(self, input_nodes, *hidden, output_nodes, learning_rate, activation="relu", bias=False):
+    def __init__(self, input_nodes, *hidden, output_nodes, learning_rate, activation="relu", bias=False, shuffle=True):
         self.input_nodes = input_nodes
         self.output_nodes = output_nodes
         self.lr = learning_rate
-        self.counter = 0
+        self.shuffle = shuffle
         self.all_nodes = [layer for layer in hidden]
         self.all_nodes.insert(0, input_nodes)
         self.all_nodes.append(output_nodes)
@@ -146,25 +153,56 @@ class NeuralNetwork:
         if activation == "softmax":
             return self.softmax(mat1)
 
-    def train(self, inputs_list, target_list):
-        # setup
-        target = np.atleast_2d(target_list).transpose()
-        outputs = self.feed_forward(inputs_list)
-        errors = [target - outputs[-1]]
-        # get errors
+    def get_errors(self, target, outputs):
+        errors = [outputs[-1] - target]
         for i in range(1, len(self.weight_matrices) + 1):
             errors.insert(0, np.matmul(self.weight_matrices[-i].transpose(), errors[0]))
-        # backprop
+        return errors
+
+    def backpropagation(self, errors, outputs):
         for i in range(1, len(self.weight_matrices) + 1):
             if i == 1:
-                back_prop(self.weight_matrices[-i], self.lr, errors[-i], outputs[-i], outputs[-(i + 1)], "softmax")
+                back_prop_single_layer(self.weight_matrices[-i], self.lr, errors[-i], outputs[-i], outputs[-(i + 1)], "softmax")
             else:
-                back_prop(self.weight_matrices[-i], self.lr, errors[-i], outputs[-i], outputs[-(i + 1)], self.activation)
+                back_prop_single_layer(self.weight_matrices[-i], self.lr, errors[-i], outputs[-i], outputs[-(i + 1)], self.activation)
             if self.bias and i < len(self.bias_matrices) + 1:
-                backprop_bias(self.bias_matrices[-i], self.lr, errors[-(i + 1)])
+                backprop_bias_single_layer(self.bias_matrices[-i], self.lr, errors[-(i + 1)])
+
+    def train_without_batches(self, inputs_list, target_list):
+        target = np.atleast_2d(target_list).transpose()
+        outputs = self.feed_forward(inputs_list)
+        errors = self.get_errors(target, outputs)
+        self.backpropagation(errors, outputs)
         # metrics
         self.get_accuracy(target, outputs[-1])
         self.cross_entropy_loss(outputs[-1], target)
+
+    def train_minibatches(self, batches, current_epoch, batch_size, sample_amt):
+        for k, batch in enumerate(batches):
+            outputs_sum = [np.atleast_2d(np.zeros(self.all_nodes[i])).transpose() for i in range(len(self.all_nodes))]
+            errors_sum = [np.atleast_2d(np.zeros(self.all_nodes[i])).transpose() for i in range(len(self.all_nodes))]
+            x = 0
+            samples_batch, target_batch = batch
+            for i in range(target_batch.shape[0]):
+                sample, target = samples_batch[i], target_batch[i]
+                target = np.atleast_2d(target).transpose()
+                outputs = self.feed_forward(sample)
+                errors = self.get_errors(target, outputs)
+                for j in range(len(outputs)):
+                    outputs_sum[j] += outputs[j]
+                    errors_sum[j] += errors[j]
+                x += 1
+                # metrics, yes you could and maybe should do that for the whole batch at
+                # once but rn im too lazy maybe later
+                self.get_accuracy(target, outputs[-1])
+                self.cross_entropy_loss(outputs[-1], target)
+
+            if x != 0:
+                for i in range(len(outputs_sum)):
+                    outputs_sum[i] = outputs_sum[i] * (1.0 / x)
+                    errors_sum[i] = errors_sum[i] * (1.0 / x)
+                self.backpropagation(errors_sum, outputs_sum)
+                progressBar(k, math.ceil(sample_amt / batch_size), current_epoch, self.accuracy, self.loss)
 
     def get_accuracy(self, target, final):
         if np.argmax(target) == np.argmax(final):
@@ -174,7 +212,7 @@ class NeuralNetwork:
     def feed_forward(self, inputs_list):
         outputs = [np.atleast_2d(inputs_list).transpose()]
         for i in range(len(self.weight_matrices)):
-            # last layer is softmax and has no bias
+            # last layer is output and has no bias, input layer also has no bias
             if self.bias and i < len(self.weight_matrices) - 1:
                 output = np.matmul(self.weight_matrices[i], outputs[i]) + self.bias_matrices[i]
             else:
@@ -189,22 +227,30 @@ class NeuralNetwork:
     def predict(self, input_list):
         return self.feed_forward(input_list)[-1]
 
-    def train_mnist(self, epochs, load=True):
+    def train_mnist(self, epochs, load=True, batch_size=1):
+        if batch_size < 1:
+            raise ValueError("Batch size cannot be smaller than 1, your batch size is:", batch_size)
         train_images = mnist.train_images()
         train_labels = to_categorical(mnist.train_labels())
-
         train_images = train_images.reshape((-1, 784))
         train_images = (train_images / 255)
-
+        if batch_size > train_images.shape[0]:
+            raise ValueError("Batch size cannot be larger than amount of training samples, amount of training samples "
+                             "is:", train_images.shape[0], "batch size is:", batch_size)
         if load:
             self.load_weights()
             if self.bias: self.load_bias()
         for j in range(epochs):
-            train_images, train_labels = shuffle_data(train_images, train_labels)
-            for i in range(len(train_images)):
-                self.train(train_images[i], train_labels[i])
-                if i % 200 == 0 or i == len(train_images) - 1:
-                    progressBar(i, len(train_images), j, self.accuracy, self.loss)
+            if self.shuffle:
+                train_images, train_labels = shuffle_data(train_images, train_labels)
+            if batch_size == 1:
+                for i in range(len(train_images)):
+                    self.train_without_batches(train_images[i], train_labels[i])
+                    if i % 200 == 0 or i == len(train_images) - 1:
+                        progressBar(i, len(train_images), j, self.accuracy, self.loss)
+            else:
+                x = iterate_minibatches(train_images, train_labels, batch_size)
+                self.train_minibatches(x, j, batch_size, len(train_images))
             print("")
             self.accuracy = np.ones(2)
             self.loss = np.ones(2)
