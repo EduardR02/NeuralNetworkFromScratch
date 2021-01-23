@@ -104,7 +104,6 @@ def iterate_minibatches(samples, labels, batchsize):
 
 
 class NeuralNetwork:
-    # implement many hidden layers with args
     def __init__(self, input_nodes, *hidden, output_nodes, learning_rate, activation="relu", bias=False, shuffle=True):
         self.input_nodes = input_nodes
         self.output_nodes = output_nodes
@@ -181,28 +180,24 @@ class NeuralNetwork:
         for k, batch in enumerate(batches):
             outputs_sum = [np.atleast_2d(np.zeros(self.all_nodes[i])).transpose() for i in range(len(self.all_nodes))]
             errors_sum = [np.atleast_2d(np.zeros(self.all_nodes[i])).transpose() for i in range(len(self.all_nodes))]
-            x = 0
             samples_batch, target_batch = batch
             for i in range(target_batch.shape[0]):
-                sample, target = samples_batch[i], target_batch[i]
-                target = np.atleast_2d(target).transpose()
-                outputs = self.feed_forward(sample)
+                target = np.atleast_2d(target_batch[i]).transpose()
+                outputs = self.feed_forward(samples_batch[i])
                 errors = self.get_errors(target, outputs)
                 for j in range(len(outputs)):
                     outputs_sum[j] += outputs[j]
                     errors_sum[j] += errors[j]
-                x += 1
                 # metrics, yes you could and maybe should do that for the whole batch at
                 # once but rn im too lazy maybe later
                 self.get_accuracy(target, outputs[-1])
                 self.cross_entropy_loss(outputs[-1], target)
 
-            if x != 0:
-                for i in range(len(outputs_sum)):
-                    outputs_sum[i] = outputs_sum[i] * (1.0 / x)
-                    errors_sum[i] = errors_sum[i] * (1.0 / x)
-                self.backpropagation(errors_sum, outputs_sum)
-                progressBar(k, math.ceil(sample_amt / batch_size), current_epoch, self.accuracy, self.loss)
+            for i in range(len(outputs_sum)):
+                outputs_sum[i] = outputs_sum[i] / (1.0 * batch_size)
+                errors_sum[i] = errors_sum[i] / (1.0 * batch_size)
+            self.backpropagation(errors_sum, outputs_sum)
+            progressBar(k, math.ceil(sample_amt / batch_size), current_epoch, self.accuracy, self.loss)
 
     def get_accuracy(self, target, final):
         if np.argmax(target) == np.argmax(final):
@@ -230,6 +225,7 @@ class NeuralNetwork:
     def train_mnist(self, epochs, load=True, batch_size=1):
         if batch_size < 1:
             raise ValueError("Batch size cannot be smaller than 1, your batch size is:", batch_size)
+        self.lr = self.lr * batch_size
         train_images = mnist.train_images()
         train_labels = to_categorical(mnist.train_labels())
         train_images = train_images.reshape((-1, 784))
@@ -246,7 +242,7 @@ class NeuralNetwork:
             if batch_size == 1:
                 for i in range(len(train_images)):
                     self.train_without_batches(train_images[i], train_labels[i])
-                    if i % 200 == 0 or i == len(train_images) - 1:
+                    if i % 50 == 0 or i == len(train_images) - 1:
                         progressBar(i, len(train_images), j, self.accuracy, self.loss)
             else:
                 x = iterate_minibatches(train_images, train_labels, batch_size)
