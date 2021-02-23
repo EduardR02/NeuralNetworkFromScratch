@@ -13,7 +13,7 @@ def progressBar(current, total, epoch, acc, loss, bar_length=20):
     spaces = ' ' * (bar_length - len(arrow))
 
     print("metrics[", "acc:", acc[0] / acc[1], "; loss:", loss[0] / loss[1], "]",
-          "Epoch:", epoch + 1, ";", 'Progress: [%s%s] %d %%' % (arrow, spaces, percent), "out of", total, end='\r', )
+          "Epoch:", epoch + 1, ";", 'Progress: [%s%s] %d %%' % (arrow, spaces, percent), "out of", total, "  ", end='\r', )
 
 
 def to_categorical(arr):
@@ -104,7 +104,8 @@ def iterate_minibatches(samples, labels, batchsize):
 
 
 class NeuralNetwork:
-    def __init__(self, input_nodes, *hidden, output_nodes, learning_rate, activation="relu", bias=False, shuffle=True):
+    def __init__(self, input_nodes, *hidden, output_nodes, learning_rate, activation="relu",
+                 last_layer_activation="softmax", bias=False, shuffle=True):
         self.input_nodes = input_nodes
         self.output_nodes = output_nodes
         self.lr = learning_rate
@@ -122,10 +123,14 @@ class NeuralNetwork:
         else:
             self.bias = True
             self.bias_matrices = []
+            x = 0
+            self.bias_last_layer = 0 if last_layer_activation == "softmax" else 1
             for i in range(len(self.weight_matrices) - 1):
                 x, y = self.weight_matrices[i + 1].shape
                 self.bias_matrices.append(np.atleast_2d(np.zeros(y)).transpose())
-
+            # add last bias layer if not softmax
+            if self.bias_last_layer:
+                self.bias_matrices.append(np.atleast_2d(np.zeros(x)).transpose())
         # activation functions
         self.sigmoid_activation = lambda x: sci.expit(x)
         self.relu_forward = lambda x: np.maximum(0.0, x)
@@ -135,6 +140,7 @@ class NeuralNetwork:
         self.loss = np.ones(2)
         # set activation function for all except last layer, because last is always softmax
         self.activation = activation
+        self.last_layer_activation = last_layer_activation
 
     def cross_entropy_loss(self, prediction, target):
         self.loss[0] += cross_entropy_cost_func(prediction, target)
@@ -153,7 +159,12 @@ class NeuralNetwork:
             return self.softmax(mat1)
 
     def get_errors(self, target, outputs):
-        errors = [outputs[-1] - target]
+        if self.last_layer_activation == "relu":
+            errors = [outputs[-1] - target]
+        elif self.last_layer_activation == "softmax":
+            errors = [outputs[-1] - target]
+        else:
+            errors = [outputs[-1] - target]
         for i in range(1, len(self.weight_matrices) + 1):
             errors.insert(0, np.matmul(self.weight_matrices[-i].transpose(), errors[0]))
         return errors
@@ -161,10 +172,10 @@ class NeuralNetwork:
     def backpropagation(self, errors, outputs):
         for i in range(1, len(self.weight_matrices) + 1):
             if i == 1:
-                back_prop_single_layer(self.weight_matrices[-i], self.lr, errors[-i], outputs[-i], outputs[-(i + 1)], "softmax")
+                back_prop_single_layer(self.weight_matrices[-i], self.lr, errors[-i], outputs[-i], outputs[-(i + 1)], self.last_layer_activation)
             else:
                 back_prop_single_layer(self.weight_matrices[-i], self.lr, errors[-i], outputs[-i], outputs[-(i + 1)], self.activation)
-            if self.bias and i < len(self.bias_matrices) + 1:
+            if self.bias and i < len(self.bias_matrices) + 1 + self.bias_last_layer:
                 backprop_bias_single_layer(self.bias_matrices[-i], self.lr, errors[-(i + 1)])
 
     def train_without_batches(self, inputs_list, target_list):
@@ -207,13 +218,12 @@ class NeuralNetwork:
     def feed_forward(self, inputs_list):
         outputs = [np.atleast_2d(inputs_list).transpose()]
         for i in range(len(self.weight_matrices)):
-            # last layer is output and has no bias, input layer also has no bias
-            if self.bias and i < len(self.weight_matrices) - 1:
+            if self.bias and i < len(self.weight_matrices) - 1 + self.bias_last_layer:
                 output = np.matmul(self.weight_matrices[i], outputs[i]) + self.bias_matrices[i]
             else:
                 output = np.matmul(self.weight_matrices[i], outputs[i])
             if i == len(self.weight_matrices) - 1:
-                output = self.apply_activation_function(output, "softmax")
+                output = self.apply_activation_function(output, self.last_layer_activation)
             else:
                 output = self.apply_activation_function(output, self.activation)
             outputs.append(output)
