@@ -159,12 +159,7 @@ class NeuralNetwork:
             return self.softmax(mat1)
 
     def get_errors(self, target, outputs):
-        if self.last_layer_activation == "relu":
-            errors = [outputs[-1] - target]
-        elif self.last_layer_activation == "softmax":
-            errors = [outputs[-1] - target]
-        else:
-            errors = [outputs[-1] - target]
+        errors = [outputs[-1] - target]
         for i in range(1, len(self.weight_matrices) + 1):
             errors.insert(0, np.matmul(self.weight_matrices[-i].transpose(), errors[0]))
         return errors
