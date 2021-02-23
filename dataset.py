@@ -1,5 +1,6 @@
 import mnist
 import numpy as np
+from cifar10_web import cifar10
 
 
 def progressBar(current, total, epoch, acc, loss, bar_length=20):
@@ -38,6 +39,19 @@ def to_categorical(arr):
     return categorical
 
 
+def get_train_data_cifar10():
+    # already preprocessed
+    train_images, train_labels, test_images, test_labels = cifar10(path="C:/Users/Eduard/data/cifar10")
+    train_images = train_images.astype("float64")
+    return train_images, train_labels
+
+
+def get_test_data_cifar10():
+    train_images, train_labels, test_images, test_labels = cifar10(path="C:/Users/Eduard/data/cifar10")
+    test_images = test_images.astype("float64")
+    return test_images, test_labels
+
+
 def get_train_data_mnist():
     train_images = mnist.train_images()
     train_labels = to_categorical(mnist.train_labels())
@@ -58,7 +72,7 @@ def train_mnist(model, epochs, load=True, batch_size=1):
     if batch_size < 1:
         raise ValueError("Batch size cannot be smaller than 1, your batch size is:", batch_size)
     model.lr *= batch_size
-    train_images, train_labels = get_train_data_mnist()
+    train_images, train_labels = get_train_data_cifar10()
     if batch_size > train_images.shape[0]:
         raise ValueError("Batch size cannot be larger than amount of training samples, amount of training samples "
                          "is:", train_images.shape[0], "batch size is:", batch_size)
@@ -69,6 +83,7 @@ def train_mnist(model, epochs, load=True, batch_size=1):
     for j in range(epochs):
         if model.shuffle:
             train_images, train_labels = shuffle_data(train_images, train_labels)
+            pass
         if batch_size == 1:
             for i in range(len(train_images)):
                 model.train_without_batches(train_images[i], train_labels[i])
@@ -85,7 +100,7 @@ def train_mnist(model, epochs, load=True, batch_size=1):
 
 
 def test_mnist(model):
-    test_images, test_labels = get_test_data_mnist()
+    test_images, test_labels = get_test_data_cifar10()
     model.accuracy = np.ones(2)
     model.loss = np.ones(2)
 

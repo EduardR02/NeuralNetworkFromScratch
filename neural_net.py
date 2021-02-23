@@ -6,17 +6,16 @@ import scipy.special as sci
 from numba import jit
 
 
-@jit('void(float64[:,:], float64, float64[:,:], float64[:,:], float64[:,:])', nopython=True)
-def backprop_sigmoid_derivative(weight_mat, lr, error, this_layer_activation, prev_layer_activation):
+@jit('void(float64[:,:], float64, float64[:,:], float64[:,:])', nopython=True)
+def backprop_sigmoid_derivative(weight_mat, lr, error, prev_layer_activation):
     # the sigmoid function has at this point already been applied to this_layer
-    weight_mat -= lr * np.dot((error * this_layer_activation * (1.0 - this_layer_activation)),
-                              np.transpose(prev_layer_activation))
+    weight_mat -= lr * np.dot(error, np.transpose(prev_layer_activation))
 
 
-@jit('void(float64[:,:], float64, float64[:,:], float64[:,:], float64[:,:])', nopython=True)
-def backprop_relu(weight_mat, lr, error, this_layer_activation, prev_layer_activation):
+@jit('void(float64[:,:], float64, float64[:,:], float64[:,:])', nopython=True)
+def backprop_relu(weight_mat, lr, error, prev_layer_activation):
     # relu derivative has been applied to this_layer by this point
-    weight_mat -= lr * np.dot((error * this_layer_activation), np.transpose(prev_layer_activation))
+    weight_mat -= lr * np.dot(error, np.transpose(prev_layer_activation))
 
 
 @jit('void(float64[:,:], float64, float64[:,:], float64[:,:])', nopython=True)
@@ -33,22 +32,22 @@ def backprop_bias_single_layer(bias_mat, lr,  error):
 def relu_derivative(k):
     x = k.copy()
     x[x < 0] = 0
-    x[x > 0] = 1
+    x[x > 0] = 1.0
     return x
 
 
 def leaky_relu_derivative(k):
     x = k.copy()
     x[x <= 0] *= 0.01
-    x[x > 0] = 1
+    x[x > 0] = 1.0
     return x
 
 
-def back_prop_single_layer(weight_mat, lr, error, this_layer_activation, prev_layer_activation, activation ="relu"):
+def back_prop_single_layer(weight_mat, lr, error, prev_layer_activation, activation ="relu"):
     if activation == "sigmoid":
-        backprop_sigmoid_derivative(weight_mat, lr, error, this_layer_activation, prev_layer_activation)
+        backprop_sigmoid_derivative(weight_mat, lr, error, prev_layer_activation)
     elif activation == "relu":
-        backprop_relu(weight_mat, lr, error, relu_derivative(this_layer_activation), prev_layer_activation)
+        backprop_relu(weight_mat, lr, error, prev_layer_activation)
     elif activation == "softmax":
         backprop_softmax_derivative(weight_mat, lr, error, prev_layer_activation)
     else:
@@ -81,7 +80,7 @@ class NeuralNetwork:
         for i in range(len(self.all_nodes) - 1):
             self.weight_matrices.append(np.random.normal(0.0, pow(self.all_nodes[i], -0.5),
                                                          (self.all_nodes[i + 1], self.all_nodes[i])))
-        if len(self.weight_matrices) == 1 or not bias:
+        if (len(self.weight_matrices) == 1 and last_layer_activation == "softmax") or not bias:
             self.bias = False
         else:
             self.bias = True
@@ -97,7 +96,7 @@ class NeuralNetwork:
         # activation functions
         self.sigmoid_activation = lambda x: sci.expit(x)
         self.relu_forward = lambda x: np.maximum(0.0, x)
-        self.softmax = lambda x: sci.softmax(x)
+        self.softmax = lambda x: np.exp(x) / np.exp(x).sum()
         # metrics
         self.accuracy = np.ones(2)
         self.loss = np.ones(2)
@@ -122,20 +121,23 @@ class NeuralNetwork:
             return self.softmax(mat1)
 
     def get_errors(self, target, outputs):
-        if self.last_layer_activation == "softmax":
-            errors = [outputs[-1] - target]
-        else:
-            errors = [outputs[-1] - target]
+        errors = [outputs[-1] - target]
         for i in range(1, len(self.weight_matrices) + 1):
-            errors.insert(0, np.matmul(self.weight_matrices[-i].transpose(), errors[0]))
+            x = np.matmul(self.weight_matrices[-i].transpose(), errors[0])
+            if self.activation == "relu":
+                errors.insert(0, x * relu_derivative(outputs[-i-1]))
+            elif self.activation == "sigmoid":
+                errors.insert(0, x * (outputs[-i - 1] * (1.0 - outputs[-i - 1])))
+            else:
+                errors.insert(0, x)
         return errors
 
     def backpropagation(self, errors, outputs):
         for i in range(1, len(self.weight_matrices) + 1):
             if i == 1:
-                back_prop_single_layer(self.weight_matrices[-i], self.lr, errors[-i], outputs[-i], outputs[-(i + 1)], self.last_layer_activation)
+                back_prop_single_layer(self.weight_matrices[-i], self.lr, errors[-i], outputs[-(i + 1)], self.last_layer_activation)
             else:
-                back_prop_single_layer(self.weight_matrices[-i], self.lr, errors[-i], outputs[-i], outputs[-(i + 1)], self.activation)
+                back_prop_single_layer(self.weight_matrices[-i], self.lr, errors[-i], outputs[-(i + 1)], self.activation)
             if self.bias and i < len(self.bias_matrices) + 1 + self.bias_last_layer:
                 backprop_bias_single_layer(self.bias_matrices[-i], self.lr, errors[-(i + 1)])
 
@@ -158,14 +160,10 @@ class NeuralNetwork:
                 outputs = self.feed_forward(samples_batch[i])
                 errors = self.get_errors(target, outputs)
                 for j in range(len(outputs)):
-                    outputs_sum[j] += outputs[j]
-                    errors_sum[j] += errors[j]
+                    outputs_sum[j] += outputs[j] / batch_size
+                    errors_sum[j] += errors[j] / batch_size
                 self.get_accuracy(outputs[-1], target)
                 self.log_loss(outputs[-1], target)
-
-            for i in range(len(outputs_sum)):
-                outputs_sum[i] /= batch_size
-                errors_sum[i] /= batch_size
             self.backpropagation(errors_sum, outputs_sum)
             progressBar(k, math.ceil(sample_amt / batch_size), current_epoch, self.accuracy, self.loss)
 
