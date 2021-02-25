@@ -6,25 +6,25 @@ import scipy.special as sci
 from numba import jit
 
 
-@jit('void(float64[:,:], float64, float64[:,:], float64[:,:], float64[:,:])', nopython=True)
-def backprop_sigmoid_derivative(weight_mat, lr, error, this_layer_actv, prev_layer_activation):
+# @jit('void(float64[:,:], float64[:,:], float64[:,:])', nopython=True)
+def sigmoid_gradients(error, this_layer_actv, prev_layer_activation):
     # the sigmoid function has at this point already been applied to this_layer
-    weight_mat -= lr * np.dot(error * this_layer_actv * (1.0 - this_layer_actv), np.transpose(prev_layer_activation))
+    return np.dot(error * this_layer_actv * (1.0 - this_layer_actv), np.transpose(prev_layer_activation))
 
 
-@jit('void(float64[:,:], float64, float64[:,:], float64[:,:], float64[:,:])', nopython=True)
-def backprop_relu(weight_mat, lr, error, this_layer_actv, prev_layer_activation):
+# @jit('void(float64[:,:], float64[:,:], float64[:,:])', nopython=True)
+def relu_gradients(error, this_layer_actv, prev_layer_activation):
     # relu derivative has been applied to this_layer by this point
-    weight_mat -= lr * np.dot(error * this_layer_actv, np.transpose(prev_layer_activation))
+    return np.dot(error * this_layer_actv, np.transpose(prev_layer_activation))
 
 
-@jit('void(float64[:,:], float64, float64[:,:], float64[:,:])', nopython=True)
-def backprop_softmax_derivative(weight_mat, lr, error, prev_layer_activation):
+# @jit('void(float64[:,:], float64[:,:])', nopython=True)
+def softmax_gradients(error, prev_layer_activation):
     # (softmax activation - target values)
-    weight_mat -= lr * np.dot(error, np.transpose(prev_layer_activation))
+    return np.dot(error, np.transpose(prev_layer_activation))
 
 
-@jit('void(float64[:,:], float64, float64[:,:])', nopython=True)
+# @jit('void(float64[:,:], float64, float64[:,:])', nopython=True)
 def backprop_bias_single_layer(bias_mat, lr,  error):
     bias_mat -= lr * error
 
@@ -43,13 +43,13 @@ def leaky_relu_derivative(k):
     return x
 
 
-def back_prop_single_layer(weight_mat, lr, error, this_layer_actv, prev_layer_activation, activation ="relu"):
+def get_gradients_single_layer(error, this_layer_actv, prev_layer_activation, activation ="relu"):
     if activation == "sigmoid":
-        backprop_sigmoid_derivative(weight_mat, lr, error, this_layer_actv, prev_layer_activation)
+        return sigmoid_gradients(error, this_layer_actv, prev_layer_activation)
     elif activation == "relu":
-        backprop_relu(weight_mat, lr, error, relu_derivative(this_layer_actv), prev_layer_activation)
+        return relu_gradients(error, relu_derivative(this_layer_actv), prev_layer_activation)
     elif activation == "softmax":
-        backprop_softmax_derivative(weight_mat, lr, error, prev_layer_activation)
+        return softmax_gradients(error, prev_layer_activation)
     else:
         raise Exception("Given activation function does not exist")
 
@@ -122,43 +122,52 @@ class NeuralNetwork:
 
     def get_errors(self, target, outputs):
         errors = [outputs[-1] - target]
-        for i in range(1, len(self.weight_matrices) + 1):
+        for i in range(1, len(self.weight_matrices)):
             errors.insert(0, np.matmul(self.weight_matrices[-i].transpose(), errors[0]))
         return errors
 
-    def backpropagation(self, errors, outputs):
-        for i in range(1, len(self.weight_matrices) + 1):
-            if i == 1:
-                back_prop_single_layer(self.weight_matrices[-i], self.lr, errors[-i], outputs[-i], outputs[-(i + 1)], self.last_layer_activation)
-            else:
-                back_prop_single_layer(self.weight_matrices[-i], self.lr, errors[-i], outputs[-i], outputs[-(i + 1)], self.activation)
-            if self.bias and i < len(self.bias_matrices) + 1 + self.bias_last_layer:
-                backprop_bias_single_layer(self.bias_matrices[-i], self.lr, errors[-(i + 1)])
+    def get_gradients(self, errors, outputs):
+        gradients = []
+        for i in range(len(self.weight_matrices)):
+            if i == len(self.weight_matrices) - 1: actv_func = self.last_layer_activation
+            else: actv_func = self.activation
+            gradients.append(get_gradients_single_layer(errors[i], outputs[i + 1], outputs[i], actv_func))
+        return gradients
+
+    def update_weights_and_bias(self, gradients, errors):
+        for i in range(len(self.weight_matrices)):
+            self.weight_matrices[i] -= self.lr * gradients[i]
+            # wrong
+            if self.bias and 0 < i < len(self.bias_matrices) - 1 + self.bias_last_layer:
+                backprop_bias_single_layer(self.bias_matrices[i], self.lr, errors[i])
 
     def train_without_batches(self, inputs_list, target_list):
         target = np.atleast_2d(target_list).transpose()
         outputs = self.feed_forward(inputs_list)
         errors = self.get_errors(target, outputs)
-        self.backpropagation(errors, outputs)
+        gradients = self.get_gradients(errors, outputs)
+        self.update_weights_and_bias(gradients, errors)
         # metrics
         self.get_accuracy(outputs[-1], target)
         self.log_loss(outputs[-1], target)
 
     def train_minibatches(self, batches, current_epoch, batch_size, sample_amt):
         for k, batch in enumerate(batches):
-            outputs_sum = [np.atleast_2d(np.zeros(self.all_nodes[i])).transpose() for i in range(len(self.all_nodes))]
-            errors_sum = [np.atleast_2d(np.zeros(self.all_nodes[i])).transpose() for i in range(len(self.all_nodes))]
+            errors_sum = [np.atleast_2d(np.zeros(self.all_nodes[i + 1])).transpose() for i in range(len(self.all_nodes) - 1)]
+            gradients_sum = [np.zeros(i.shape) for i in self.weight_matrices]
+
             samples_batch, target_batch = batch
             for i in range(batch_size):
                 target = np.atleast_2d(target_batch[i]).transpose()
                 outputs = self.feed_forward(samples_batch[i])
                 errors = self.get_errors(target, outputs)
-                for j in range(len(outputs)):
-                    outputs_sum[j] += outputs[j] / batch_size
-                    errors_sum[j] += errors[j] / batch_size
+                gradients = self.get_gradients(errors, outputs)
+                for j in range(len(errors)):
+                    gradients_sum[j] += gradients[j]
+                    errors_sum[j] += errors[j]
                 self.get_accuracy(outputs[-1], target)
                 self.log_loss(outputs[-1], target)
-            self.backpropagation(errors_sum, outputs_sum)
+            self.update_weights_and_bias(gradients_sum, errors_sum)
             progressBar(k, math.ceil(sample_amt / batch_size), current_epoch, self.accuracy, self.loss)
 
     def get_accuracy(self, final, target):
