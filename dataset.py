@@ -71,7 +71,6 @@ def get_test_data_mnist():
 def train_mnist(model, epochs, load=True, batch_size=1):
     if batch_size < 1:
         raise ValueError("Batch size cannot be smaller than 1, your batch size is:", batch_size)
-    model.lr *= batch_size
     train_images, train_labels = get_train_data_cifar10()
     if batch_size > train_images.shape[0]:
         raise ValueError("Batch size cannot be larger than amount of training samples, amount of training samples "

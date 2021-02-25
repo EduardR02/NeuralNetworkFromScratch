@@ -6,16 +6,16 @@ import scipy.special as sci
 from numba import jit
 
 
-@jit('void(float64[:,:], float64, float64[:,:], float64[:,:])', nopython=True)
-def backprop_sigmoid_derivative(weight_mat, lr, error, prev_layer_activation):
+@jit('void(float64[:,:], float64, float64[:,:], float64[:,:], float64[:,:])', nopython=True)
+def backprop_sigmoid_derivative(weight_mat, lr, error, this_layer_actv, prev_layer_activation):
     # the sigmoid function has at this point already been applied to this_layer
-    weight_mat -= lr * np.dot(error, np.transpose(prev_layer_activation))
+    weight_mat -= lr * np.dot(error * this_layer_actv * (1.0 - this_layer_actv), np.transpose(prev_layer_activation))
 
 
-@jit('void(float64[:,:], float64, float64[:,:], float64[:,:])', nopython=True)
-def backprop_relu(weight_mat, lr, error, prev_layer_activation):
+@jit('void(float64[:,:], float64, float64[:,:], float64[:,:], float64[:,:])', nopython=True)
+def backprop_relu(weight_mat, lr, error, this_layer_actv, prev_layer_activation):
     # relu derivative has been applied to this_layer by this point
-    weight_mat -= lr * np.dot(error, np.transpose(prev_layer_activation))
+    weight_mat -= lr * np.dot(error * this_layer_actv, np.transpose(prev_layer_activation))
 
 
 @jit('void(float64[:,:], float64, float64[:,:], float64[:,:])', nopython=True)
@@ -43,11 +43,11 @@ def leaky_relu_derivative(k):
     return x
 
 
-def back_prop_single_layer(weight_mat, lr, error, prev_layer_activation, activation ="relu"):
+def back_prop_single_layer(weight_mat, lr, error, this_layer_actv, prev_layer_activation, activation ="relu"):
     if activation == "sigmoid":
-        backprop_sigmoid_derivative(weight_mat, lr, error, prev_layer_activation)
+        backprop_sigmoid_derivative(weight_mat, lr, error, this_layer_actv, prev_layer_activation)
     elif activation == "relu":
-        backprop_relu(weight_mat, lr, error, prev_layer_activation)
+        backprop_relu(weight_mat, lr, error, relu_derivative(this_layer_actv), prev_layer_activation)
     elif activation == "softmax":
         backprop_softmax_derivative(weight_mat, lr, error, prev_layer_activation)
     else:
@@ -96,7 +96,7 @@ class NeuralNetwork:
         # activation functions
         self.sigmoid_activation = lambda x: sci.expit(x)
         self.relu_forward = lambda x: np.maximum(0.0, x)
-        self.softmax = lambda x: np.exp(x) / np.exp(x).sum()
+        self.softmax = lambda x: sci.softmax(x)
         # metrics
         self.accuracy = np.ones(2)
         self.loss = np.ones(2)
@@ -123,21 +123,15 @@ class NeuralNetwork:
     def get_errors(self, target, outputs):
         errors = [outputs[-1] - target]
         for i in range(1, len(self.weight_matrices) + 1):
-            x = np.matmul(self.weight_matrices[-i].transpose(), errors[0])
-            if self.activation == "relu":
-                errors.insert(0, x * relu_derivative(outputs[-i-1]))
-            elif self.activation == "sigmoid":
-                errors.insert(0, x * (outputs[-i - 1] * (1.0 - outputs[-i - 1])))
-            else:
-                errors.insert(0, x)
+            errors.insert(0, np.matmul(self.weight_matrices[-i].transpose(), errors[0]))
         return errors
 
     def backpropagation(self, errors, outputs):
         for i in range(1, len(self.weight_matrices) + 1):
             if i == 1:
-                back_prop_single_layer(self.weight_matrices[-i], self.lr, errors[-i], outputs[-(i + 1)], self.last_layer_activation)
+                back_prop_single_layer(self.weight_matrices[-i], self.lr, errors[-i], outputs[-i], outputs[-(i + 1)], self.last_layer_activation)
             else:
-                back_prop_single_layer(self.weight_matrices[-i], self.lr, errors[-i], outputs[-(i + 1)], self.activation)
+                back_prop_single_layer(self.weight_matrices[-i], self.lr, errors[-i], outputs[-i], outputs[-(i + 1)], self.activation)
             if self.bias and i < len(self.bias_matrices) + 1 + self.bias_last_layer:
                 backprop_bias_single_layer(self.bias_matrices[-i], self.lr, errors[-(i + 1)])
 
