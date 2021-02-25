@@ -5,10 +5,10 @@ from cifar10_web import cifar10
 
 def progressBar(current, total, epoch, acc, loss, bar_length=20):
     percent = float(current) * 100 / (total - 1)
-    arrow = '-' * int(percent / 100 * bar_length - 1) + '>'
+    arrow = '=' * int(percent / 100 * bar_length - 1) + '>'
     spaces = ' ' * (bar_length - len(arrow))
 
-    print("metrics[", "acc:", acc[0] / acc[1], "; loss:", loss[0] / loss[1], "]",
+    print("metrics[", "acc:", round(acc[0] / acc[1], 4), "; loss:", round(loss[0] / loss[1], 4), "]",
           "Epoch:", epoch + 1, ";", 'Progress: [%s%s] %d %%' % (arrow, spaces, percent), "out of", total, "  ", end='\r',)
 
 
@@ -72,7 +72,7 @@ def train_mnist(model, epochs, load=True, batch_size=1):
     if batch_size < 1:
         raise ValueError("Batch size cannot be smaller than 1, your batch size is:", batch_size)
     model.lr /= batch_size
-    train_images, train_labels = get_train_data_cifar10()
+    train_images, train_labels = get_train_data_mnist()
     if batch_size > train_images.shape[0]:
         raise ValueError("Batch size cannot be larger than amount of training samples, amount of training samples "
                          "is:", train_images.shape[0], "batch size is:", batch_size)
@@ -100,7 +100,7 @@ def train_mnist(model, epochs, load=True, batch_size=1):
 
 
 def test_mnist(model):
-    test_images, test_labels = get_test_data_cifar10()
+    test_images, test_labels = get_test_data_mnist()
     model.accuracy = np.ones(2)
     model.loss = np.ones(2)
 

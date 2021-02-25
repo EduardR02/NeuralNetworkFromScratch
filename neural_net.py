@@ -6,25 +6,25 @@ import scipy.special as sci
 from numba import jit
 
 
-# @jit('void(float64[:,:], float64[:,:], float64[:,:])', nopython=True)
-def sigmoid_gradients(error, this_layer_actv, prev_layer_activation):
+@jit('void(float64[:,:], float64[:,:], float64[:,:], float64[:,:])', nopython=True)
+def sigmoid_gradients(gradients, error, this_layer_actv, prev_layer_activation):
     # the sigmoid function has at this point already been applied to this_layer
-    return np.dot(error * this_layer_actv * (1.0 - this_layer_actv), np.transpose(prev_layer_activation))
+    gradients += np.dot(error * this_layer_actv * (1.0 - this_layer_actv), np.transpose(prev_layer_activation))
 
 
-# @jit('void(float64[:,:], float64[:,:], float64[:,:])', nopython=True)
-def relu_gradients(error, this_layer_actv, prev_layer_activation):
+@jit('void(float64[:,:], float64[:,:], float64[:,:], float64[:,:])', nopython=True)
+def relu_gradients(gradients, error, this_layer_actv, prev_layer_activation):
     # relu derivative has been applied to this_layer by this point
-    return np.dot(error * this_layer_actv, np.transpose(prev_layer_activation))
+    gradients += np.dot(error * this_layer_actv, np.transpose(prev_layer_activation))
 
 
-# @jit('void(float64[:,:], float64[:,:])', nopython=True)
-def softmax_gradients(error, prev_layer_activation):
+@jit('void(float64[:,:], float64[:,:],  float64[:,:])', nopython=True)
+def softmax_gradients(gradients, error, prev_layer_activation):
     # (softmax activation - target values)
-    return np.dot(error, np.transpose(prev_layer_activation))
+    gradients += np.dot(error, np.transpose(prev_layer_activation))
 
 
-# @jit('void(float64[:,:], float64, float64[:,:])', nopython=True)
+@jit('void(float64[:,:], float64, float64[:,:])', nopython=True)
 def backprop_bias_single_layer(bias_mat, lr,  error):
     bias_mat -= lr * error
 
@@ -43,13 +43,13 @@ def leaky_relu_derivative(k):
     return x
 
 
-def get_gradients_single_layer(error, this_layer_actv, prev_layer_activation, activation ="relu"):
+def calc_gradients_single_layer(gradients, error, this_layer_actv, prev_layer_activation, activation ="relu"):
     if activation == "sigmoid":
-        return sigmoid_gradients(error, this_layer_actv, prev_layer_activation)
+        sigmoid_gradients(gradients, error, this_layer_actv, prev_layer_activation)
     elif activation == "relu":
-        return relu_gradients(error, relu_derivative(this_layer_actv), prev_layer_activation)
+        relu_gradients(gradients, error, relu_derivative(this_layer_actv), prev_layer_activation)
     elif activation == "softmax":
-        return softmax_gradients(error, prev_layer_activation)
+        softmax_gradients(gradients, error, prev_layer_activation)
     else:
         raise Exception("Given activation function does not exist")
 
@@ -127,17 +127,16 @@ class NeuralNetwork:
         return errors
 
     def get_gradients(self, errors, outputs):
-        gradients = []
-        for i in range(len(self.weight_matrices)):
+        gradients = [np.zeros(i.shape) for i in self.weight_matrices]
+        for i in range(len(gradients)):
             if i == len(self.weight_matrices) - 1: actv_func = self.last_layer_activation
             else: actv_func = self.activation
-            gradients.append(get_gradients_single_layer(errors[i], outputs[i + 1], outputs[i], actv_func))
+            calc_gradients_single_layer(gradients[i], errors[i], outputs[i + 1], outputs[i], actv_func)
         return gradients
 
     def update_weights_and_bias(self, gradients, errors):
         for i in range(len(self.weight_matrices)):
             self.weight_matrices[i] -= self.lr * gradients[i]
-            # wrong
             if self.bias and 0 < i < len(self.bias_matrices) - 1 + self.bias_last_layer:
                 backprop_bias_single_layer(self.bias_matrices[i], self.lr, errors[i])
 
@@ -157,6 +156,7 @@ class NeuralNetwork:
             gradients_sum = [np.zeros(i.shape) for i in self.weight_matrices]
 
             samples_batch, target_batch = batch
+            # should be possible to parallelize on gpu but i don't know cuda
             for i in range(batch_size):
                 target = np.atleast_2d(target_batch[i]).transpose()
                 outputs = self.feed_forward(samples_batch[i])
