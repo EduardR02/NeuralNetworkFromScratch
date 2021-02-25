@@ -126,13 +126,11 @@ class NeuralNetwork:
             errors.insert(0, np.matmul(self.weight_matrices[-i].transpose(), errors[0]))
         return errors
 
-    def get_gradients(self, errors, outputs):
-        gradients = [np.zeros(i.shape) for i in self.weight_matrices]
+    def get_gradients(self, gradients, errors, outputs):
         for i in range(len(gradients)):
             if i == len(self.weight_matrices) - 1: actv_func = self.last_layer_activation
             else: actv_func = self.activation
             calc_gradients_single_layer(gradients[i], errors[i], outputs[i + 1], outputs[i], actv_func)
-        return gradients
 
     def update_weights_and_bias(self, gradients, errors):
         for i in range(len(self.weight_matrices)):
@@ -144,7 +142,8 @@ class NeuralNetwork:
         target = np.atleast_2d(target_list).transpose()
         outputs = self.feed_forward(inputs_list)
         errors = self.get_errors(target, outputs)
-        gradients = self.get_gradients(errors, outputs)
+        gradients = [np.zeros(i.shape) for i in self.weight_matrices]
+        self.get_gradients(gradients, errors, outputs)
         self.update_weights_and_bias(gradients, errors)
         # metrics
         self.get_accuracy(outputs[-1], target)
@@ -153,7 +152,7 @@ class NeuralNetwork:
     def train_minibatches(self, batches, current_epoch, batch_size, sample_amt):
         for k, batch in enumerate(batches):
             errors_sum = [np.atleast_2d(np.zeros(self.all_nodes[i + 1])).transpose() for i in range(len(self.all_nodes) - 1)]
-            gradients_sum = [np.zeros(i.shape) for i in self.weight_matrices]
+            gradients = [np.zeros(i.shape) for i in self.weight_matrices]
 
             samples_batch, target_batch = batch
             # should be possible to parallelize on gpu but i don't know cuda
@@ -161,13 +160,12 @@ class NeuralNetwork:
                 target = np.atleast_2d(target_batch[i]).transpose()
                 outputs = self.feed_forward(samples_batch[i])
                 errors = self.get_errors(target, outputs)
-                gradients = self.get_gradients(errors, outputs)
+                self.get_gradients(gradients, errors, outputs)
                 for j in range(len(errors)):
-                    gradients_sum[j] += gradients[j]
                     errors_sum[j] += errors[j]
                 self.get_accuracy(outputs[-1], target)
                 self.log_loss(outputs[-1], target)
-            self.update_weights_and_bias(gradients_sum, errors_sum)
+            self.update_weights_and_bias(gradients, errors_sum)
             progressBar(k, math.ceil(sample_amt / batch_size), current_epoch, self.accuracy, self.loss)
 
     def get_accuracy(self, final, target):
@@ -193,10 +191,10 @@ class NeuralNetwork:
         return self.feed_forward(input_list)[-1]
 
     def check_dead_relus(self):
-        s = 0
+        s = []
         for weight_matrix in self.weight_matrices:
-            s += len(np.where(weight_matrix == 0))
-        print(s)
+            s.append(np.where(weight_matrix == 0)[0])
+        return s
 
     def load_weights(self):
         for i in range(len(self.weight_matrices)):
